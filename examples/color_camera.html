@@ -31,34 +31,471 @@
   </div>
 
   <script>
+    function Constraint() {
+  return {
+    letter: '',
+    
+    clear: function () {
+      this.letter = '';
+    }
+  }
+}
+
+/**
+ * @param {Object} constr
+ * @param {Number} pos
+ * @return {Object}
+ */
+function WordConstraint(constr, pos) {
+  return {
+    constraint: constr,
+    
+    position: pos,
+    
+    clear: function() {
+      this.constraint.clear();
+    }
+  }
+}
+
+/**
+ * @param {Dictionary} dictionary
+ * @param {Number} length
+ * @param {Number} position
+ * @param {Boolean} isHorizontal
+ * @return {Object}
+ */
+function PuzzleWord(dictionary, length, row, column, isHorizontal) {
+  var obj = {
+    word: null,
+    constraints: [],
+    length: length,
+    dictionary: dictionary,
+    
+    clear: function() {
+      for (index in this.constraints) {
+        this.constraints[index].clear();
+      }
+      
+      obj.word = null;
+    },
+    column: column,
+    row: row,
+    isHorizontal: isHorizontal
+  };
+  
+  return obj;
+}
+
+/**
+ * @param {Array<String>} dictionary
+ * @return {Object}
+ */
+function Dictionary(dictionary) {
+  return {
+    words: dictionary
+  };
+}
+
+function DictionaryLoader() {
+  return {
+    load: function (onSuccess) {
+      var request = new XMLHttpRequest();
+      request.addEventListener("load", function(ev) {
+        dictionary = request.responseText.split('\n').map(function (element) {
+          return element.toLowerCase();
+        });
+        
+        onSuccess(dictionary);
+      });
+      request.open("GET", "/words");
+      request.overrideMimeType("text/plain; charset=x-user-defined");
+      request.send();
+    }
+  };
+}
+
+function App() {
+  var obj = {};
+  
+  var loader = new DictionaryLoader();
+  
+  loader.load(function(dictionary) {
+    obj.dictionary = dictionary;
+  });
+  
+  obj.init = function(puzzle) {
+    var factory = new WordFactory();
+    
+    obj._puzzle = puzzle;
+    obj._words = factory.factory(obj._puzzle, obj.dictionary);
+  };
+  
+  obj.solve = function () {
+    obj.clear();
+    
+    var backtracker = function (words) {
+      var word = words[0];
+
+      var ownedConstraints = word.constraints.filter(function (element) {
+        return element.constraint.letter.length == 0;
+      });
+      
+      for (index in word.dictionary) {
+        var str = word.dictionary[index];
+        
+        var acceptable = word.constraints.reduce(function (prev, current) {
+          return prev && ((current.constraint.letter.length == 0) || (current.constraint.letter == str[current.position]));
+        }, true);
+        
+        if (acceptable) {
+          word.word = str;
+          if (words.length <= 1) {
+            return true;
+          }
+          
+          for (constrIndex in ownedConstraints) {
+            ownedConstraints[constrIndex].constraint.letter = str[ownedConstraints[constrIndex].position];
+          }
+          
+          if (backtracker(words.slice(1, words.length))) {
+            return true;
+          } else {
+            
+            for (constrIndex in ownedConstraints) {
+              ownedConstraints[constrIndex].constraint.letter = "";
+            }
+          }
+        }
+      }
+      
+      return false;
+    }
+    
+    if (this._words.length > 0) {
+        backtracker(this._words);
+    }
+    return this._words;
+  }
+  
+  obj.clear = function() {
+    if (this._words != undefined) {
+      
+      for (index in this._words) {
+        this._words[index].clear();
+      }
+    }
+  }
+  
+  return obj;
+}
+
+function WordFactory() {
+  var obj = {};
+  
+  
+  obj._factoryHorizontalWords = function (arr, dictionary) {
+    var words = [];
+    
+    for (var row = 0; row < arr.length; row++) {
+      
+      var startPosition = null;
+      for (var column = 0; column < arr[row].length; column++) {
+        if (
+          (arr[row][column] == 1) && 
+          (startPosition == null)
+        ) {
+          startPosition = column;
+        } else if (
+            (arr[row][column] == 0) && 
+            (startPosition != null)
+        ) {
+          if ((column - startPosition) > 1) {
+            words.push(new PuzzleWord(dictionary, column - startPosition, row, startPosition, true));
+          }
+          startPosition = null;
+        }
+      }
+      
+      if (
+        (startPosition != null) &&
+        ((arr[row].length - startPosition) > 1)
+      ) {
+        words.push(new PuzzleWord(dictionary, arr[row].length - startPosition, row, startPosition, true));
+      }
+    }
+    
+    return words
+  }
+
+  /**
+   * @param {Array<Array<Number>>} arr
+   * @param {Dictionary} dictionary
+   */
+  obj._factoryVerticalWords = function (arr, dictionary) {
+    var words = [];
+    
+    for (var column = 0; column < arr[0].length; column++) {
+      
+      var startPosition = null;
+      for (var row = 0; row < arr.length; row++) {
+        
+        if (
+          (arr[row][column] == 1) && 
+          (startPosition == null)
+        ) {
+          
+          startPosition = row;
+        } else if (
+          (arr[row][column] == 0) &&
+          (startPosition != null)
+        ) {
+          if ((row - startPosition) > 1) {
+            words.push(new PuzzleWord(dictionary, row - startPosition, startPosition, column, false));
+          }
+          startPosition = null;
+        }
+      }
+      
+      if (
+        (startPosition != null) &&
+        ((arr.length - startPosition) > 1)
+      ) {
+        words.push(new PuzzleWord(dictionary, arr.length - startPosition, startPosition, column, false));
+      }
+    }
+    
+    return words;
+  }
+  
+  /**
+   * @param {Array<Word>} words
+   */
+  obj._factoryConstraints = function factoryConstraints(words) {
+    var horizontals = words.filter(function (element) {
+      return element.isHorizontal;
+    });
+    
+    var verticals = words.filter(function (element) {
+      return !element.isHorizontal
+    });
+    
+    
+    
+    for (var horizontalIndex in horizontals) {
+      var horizontal = horizontals[horizontalIndex];
+      
+      for (var verticalIndex in verticals) {
+        var vertical = verticals[verticalIndex];
+        
+        if (
+          (vertical.column >= horizontal.column) && 
+          (vertical.column < (horizontal.column + horizontal.length))
+        ) {
+          
+          if (
+            (vertical.row <= horizontal.row) &&
+            ((vertical.row + vertical.length) > horizontal.row)
+          ) {
+            var constraint = new Constraint();
+            horizontal.constraints.push(new WordConstraint(constraint, vertical.column - horizontal.column));
+            vertical.constraints.push(new WordConstraint(constraint, horizontal.row - vertical.row));
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * @param {Array<Array<Number>>} arr
+   * @param {Dictionary} dictionary
+   */
+  obj.factory = function (arr, dictionary) {
+    if (arr.length != 0) {
+      var words = this._factoryHorizontalWords(arr,dictionary).concat(this._factoryVerticalWords(arr,dictionary));
+      this._factoryConstraints(words);
+      this._filterDictionaryForWords(words);
+    } else {
+      var words = [];
+    }
+    
+    words.sort(function (first, second) {
+      return first.length - second.length;
+    });
+    
+    return words;
+  }
+  
+  obj._filterDictionaryForWords = function (words) {
+    for (index in words) {
+      word = words[index];
+      
+      word.dictionary = word.dictionary.filter(function (element) {
+        return element.length == word.length;
+      });
+    }
+  }
+  
+  return obj;
+}
+
+
     window.onload = function() {
+      var solver = new App();
+
       var video = document.getElementById('video');
       var canvas = document.getElementById('canvas');
       var context = canvas.getContext('2d');
 
-      var tracker = new tracking.ColorTracker();
+      tracking.ColorTracker.registerColor('zalupa', function(r, g, b) {
+        if (r > 100 && g < 90 && b > 40) {
+          return true;
+        }
+        return false;
+      });
+      var tracker = new tracking.ColorTracker(['zalupa']);
+
+      var collection;
 
       tracking.track('#video', tracker, { camera: true });
 
+      function getMatrix(objects) {
+        var errorStep = objects[0].width;
+      }
+        var i = 1;
       tracker.on('track', function(event) {
         context.clearRect(0, 0, canvas.width, canvas.height);
+        collection = [];
+        
+        
+        event.data.forEach(function(rect) {
+          if (rect.color === 'custom') {
+            rect.color = tracker.customColor;
+          }
+          
+          
+          rect.centerX = (rect.x + rect.width/2);
+          rect.centerY = (rect.y + rect.height/2);
+                     
+          // context.fillText("A", rect.x + rect.width/2, rect.y + rect.height/2);
+          // context.fillText('y: ' + rect.y + 'px', rect.x + rect.width + 5, rect.y + 22);
+        });
+
+        var arrayDimensions = setMatrixCoords(event.data);
+
+        var matrix = [];
+        for (var i = 0; i < arrayDimensions[1]; i++) {
+          matrix.push([]);
+          for (var j = 0; j < arrayDimensions[0]; j++) {
+              matrix[i].push(0);
+          }
+        } 
+
+        event.data.forEach(function(element) {
+          matrix[element.matrixY][element.matrixX] = 1;
+        });
+
+        solver.init(matrix);
+        var result = solver.solve();
+
+        console.log(result);
+        result.forEach(function(el) {
+          if (el.isHorizontal) {
+            for (var i = el.column; i < (el.column + el.length); i++){
+              matrix[el.row][i] = el.word[i - el.column];
+            }
+          } else {
+            for (var i = el.row; i < (el.row + el.length); i++){
+              matrix[i][el.column] = el.word[i - el.row];
+            }
+          }
+        });
 
         event.data.forEach(function(rect) {
           if (rect.color === 'custom') {
             rect.color = tracker.customColor;
           }
-
-          context.strokeStyle = rect.color;
-          context.strokeRect(rect.x, rect.y, rect.width, rect.height);
-          context.font = '11px Helvetica';
-          context.fillStyle = "#fff";
-          context.fillText('x: ' + rect.x + 'px', rect.x + rect.width + 5, rect.y + 11);
-          context.fillText('y: ' + rect.y + 'px', rect.x + rect.width + 5, rect.y + 22);
+                     
+          if (matrix[rect.matrixY][rect.matrixX] != 1) {
+            context.strokeStyle = rect.color;
+            context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+            context.font = '11px Helvetica';
+            context.fillStyle = "#fff";
+            context.fillText(matrix[rect.matrixY][rect.matrixX], rect.x + rect.width/2, rect.y + rect.height/2);
+          }
+          // context.fillText('y: ' + rect.y + 'px', rect.x + rect.width + 5, rect.y + 22);
         });
+
+        // generateColumns(data);
+
+
       });
+      // setInterval(function(){
+      //   console.log(collection);
+      // }, 1000)
 
      initGUIControllers(tracker);
     };
+
+    function setMatrixCoords(data) {
+      if (data.length == 0) return [0, 0];
+
+      var sum = 0;
+      for (var i = 0; i < data.length; i++) {
+        sum += data[i].width;
+      }
+      var dimForCheck = 0.45 * (sum/data.length);
+
+      var stepX = 0;
+      data.sort(function(a, b) {
+          return a.centerX - b.centerX;
+      });
+      for(var i = 0; i < data.length - 1; i++) {
+        data[i].matrixX = stepX;
+        if (data[i + 1].centerX - data[i].centerX > dimForCheck) stepX++;
+      }
+      data[data.length - 1].matrixX = stepX;
+
+      var stepY = 0;
+      data.sort(function(a, b) {
+          return a.centerY - b.centerY;
+      });
+      for(var i = 0; i < data.length - 1; i++) {
+        data[i].matrixY = stepY;
+        if (data[i + 1].centerY - data[i].centerY > dimForCheck) stepY++;
+      }
+      data[data.length - 1].matrixY = stepY;
+
+      return [stepX + 1, stepY + 1];
+    }
+ 
+    // function generateColumns(data) {
+    //   console.log('gurrne')
+    //     var columns = [];
+    //     for (var index = 0; data.length > 0; index++) {
+    //         var minpoint = data.reduce(function (prev, current) {
+    //           return (prev.rect.x < current.rect.x) ? prev : current;
+    //         }, data[0]);
+
+    //         var column = data.filter(function(element, index) {
+    //             if ((element.rect.x >= minpoint.rect.x) && (element.rect.x <= (minpoint.rect.x + minpoint.rect.width))) {
+    //                 element.column = index;
+
+    //                 return true;
+    //             }
+    //             return false;
+    //         });
+
+    //         var data = data.filter(function (element) {
+    //           if ((element.rect.x >= minpoint.rect.x) && (element.rect.x <= (minpoint.rect.x + minpoint.rect.width))) {
+    //                 element.column = index;
+
+    //                 return true;
+    //             }
+    //         })
+
+    //     }
+    // }
   </script>
 
 </body>
